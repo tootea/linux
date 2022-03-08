@@ -183,7 +183,7 @@ int btrfs_add_inode_defrag(struct btrfs_inode *inode, u32 extent_thresh)
  * the next one.
  */
 static struct inode_defrag *
-btrfs_pick_defrag_inode(struct btrfs_fs_info *fs_info, u64 root, u64 ino)
+btrfs_pick_defrag_inode(struct rb_root *defrag_inodes, u64 root, u64 ino)
 {
 	struct inode_defrag *entry = NULL;
 	struct inode_defrag tmp;
@@ -194,8 +194,7 @@ btrfs_pick_defrag_inode(struct btrfs_fs_info *fs_info, u64 root, u64 ino)
 	tmp.ino = ino;
 	tmp.root = root;
 
-	spin_lock(&fs_info->defrag_inodes_lock);
-	p = fs_info->defrag_inodes.rb_node;
+	p = defrag_inodes->rb_node;
 	while (p) {
 		parent = p;
 		entry = rb_entry(parent, struct inode_defrag, rb_node);
@@ -218,8 +217,7 @@ btrfs_pick_defrag_inode(struct btrfs_fs_info *fs_info, u64 root, u64 ino)
 	}
 out:
 	if (entry)
-		rb_erase(parent, &fs_info->defrag_inodes);
-	spin_unlock(&fs_info->defrag_inodes_lock);
+		rb_erase(parent, defrag_inodes);
 	return entry;
 }
 
@@ -313,10 +311,20 @@ static int __btrfs_run_defrag_inode(struct btrfs_fs_info *fs_info,
 int btrfs_run_defrag_inodes(struct btrfs_fs_info *fs_info)
 {
 	struct inode_defrag *defrag;
+	struct rb_root defrag_inodes;
 	u64 first_ino = 0;
 	u64 root_objectid = 0;
 
 	atomic_inc(&fs_info->defrag_running);
+	spin_lock(&fs_info->defrag_inodes_lock);
+	/*
+	 * Swap the rb tree, so during autodefrag we won't run autodefrag
+	 * on the same inode due to the new writes.
+	 */
+	defrag_inodes.rb_node = fs_info->defrag_inodes.rb_node;
+	fs_info->defrag_inodes.rb_node = NULL;
+	spin_unlock(&fs_info->defrag_inodes_lock);
+
 	while (1) {
 		/* Pause the auto defragger. */
 		if (test_bit(BTRFS_FS_STATE_REMOUNTING,
@@ -327,7 +335,7 @@ int btrfs_run_defrag_inodes(struct btrfs_fs_info *fs_info)
 			break;
 
 		/* find an inode to defrag */
-		defrag = btrfs_pick_defrag_inode(fs_info, root_objectid,
+		defrag = btrfs_pick_defrag_inode(&defrag_inodes, root_objectid,
 						 first_ino);
 		if (!defrag) {
 			if (root_objectid || first_ino) {

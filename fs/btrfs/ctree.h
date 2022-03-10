@@ -865,6 +865,7 @@ struct btrfs_fs_info {
 
 	/* auto defrag inodes go here */
 	spinlock_t defrag_inodes_lock;
+	u64 defrag_last_run_ksec;
 	struct rb_root defrag_inodes;
 	atomic_t defrag_running;
 

@@ -312,8 +312,19 @@ int btrfs_run_defrag_inodes(struct btrfs_fs_info *fs_info)
 {
 	struct inode_defrag *defrag;
 	struct rb_root defrag_inodes;
+	u64 ksec = ktime_get_seconds();
 	u64 first_ino = 0;
 	u64 root_objectid = 0;
+
+	/*
+	 * If cleaner get woken up early, skip this run to avoid frequent
+	 * re-dirty, which is not really useful for heavy writes.
+	 *
+	 * TODO: Make autodefrag to happen in its own thread.
+	 */
+	if (ksec - fs_info->defrag_last_run_ksec < fs_info->commit_interval)
+		return 0;
+	fs_info->defrag_last_run_ksec = ksec;
 
 	atomic_inc(&fs_info->defrag_running);
 	spin_lock(&fs_info->defrag_inodes_lock);
